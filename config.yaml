@@ -1,0 +1,22 @@
+AppName: "go-web-base"
+AppRunMode: "dev" # dev or pro (product)
+AppAddr: ""
+AppPort: 9001
+AppReadTimeout: 60
+AppWriteTimeout: 60
+
+AppSecret: "1B5oDB9AX6yYrsBi"
+AppCorsOrigin: # 允许跨域的源
+  - ".*"
+
+LogFilePath: "logs"
+
+DBType: "mysql"
+DBHost: "192.168.100.13:3306"
+DBUser: "root"
+DBPassword: "123456"
+DBDatabase: "go_web_base"
+
+PageSize: 10
+
+UserBasePassword: "123456"
