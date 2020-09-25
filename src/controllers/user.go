@@ -13,7 +13,6 @@ import (
 func UserGet(c *gin.Context) {
 	var user models.User
 	err := c.BindUri(&user)
-
 	if err != nil {
 		logs.Error(err)
 		ResponseJson(c, http.StatusBadRequest, "ID错误")
@@ -22,12 +21,16 @@ func UserGet(c *gin.Context) {
 
 	err = models.Detail(&user)
 	if err != nil {
-		logs.Error(err)
 		ResponseJson(c, http.StatusBadRequest, "ID错误")
 		return
 	}
 
-	user.GetAllAssociationIds()
+	err = user.LoadAllAssociationIds()
+	if err != nil {
+		ResponseJson(c, http.StatusInternalServerError, err)
+		return
+	}
+
 	ResponseJson(c, http.StatusOK, struct {
 		*models.User
 		// 忽略password 不传递给客户端
@@ -49,26 +52,40 @@ func UserPost(c *gin.Context) {
 		user.Password = config.AppConfig.UserBasePassword
 	}
 
-	user.EncryptPassword()
+	err := user.EncryptPassword()
+	if err != nil {
+		ResponseJson(c, http.StatusInternalServerError, err)
+		return
+	}
 
-	user.Create()
+	err = user.Create()
+	if err != nil {
+		ResponseJson(c, http.StatusInternalServerError, err)
+		return
+	}
+
 	ResponseJson(c, http.StatusCreated, user)
 }
 
 func UserPatch(c *gin.Context) {
 	var user models.User
+
+	if err := c.ShouldBindUri(&user); err != nil || user.ID == 0 {
+		logs.Error(err)
+		ResponseJson(c, http.StatusBadRequest, "用户ID有误")
+		return
+	}
 	if err := c.ShouldBindJSON(&user); err != nil {
 		logs.Error(err)
 		ResponseJson(c, http.StatusBadRequest, "参数错误")
 		return
 	}
-	if err := c.ShouldBindUri(&user); err != nil || user.ID == 0 {
-		logs.Error(err)
-		ResponseJson(c, http.StatusBadRequest, "参数错误: 用户id不能为空")
+
+	err := user.Update()
+	if err != nil {
+		ResponseJson(c, http.StatusInternalServerError, err)
 		return
 	}
-
-	user.Update()
 	ResponseJson(c, http.StatusOK, user)
 }
 
@@ -76,21 +93,29 @@ func UserDelete(c *gin.Context) {
 	var user models.User
 	if err := c.ShouldBindUri(&user); err != nil || user.ID == 0 {
 		logs.Error(err)
-		ResponseJson(c, http.StatusBadRequest, "参数错误: 用户id不能为空")
+		ResponseJson(c, http.StatusBadRequest, "用户ID有误")
 		return
 	}
 
-	user.Delete()
+	err := user.Delete()
+	if err != nil {
+		ResponseJson(c, http.StatusInternalServerError, err)
+		return
+	}
 	ResponseJson(c, http.StatusNoContent, nil)
 }
 
 func UsersGet(c *gin.Context) {
 	var users []*models.User
-	var page uint
 	var count uint
 
-	page = utils.StrTo(c.Query("page")).Uint()
-	models.PageColumn(&users, &count, page, "id, username, chinese_name, active, superuser")
+	page := utils.StrTo(c.Query("page")).Uint()
+	pageSize := utils.StrTo(c.Query("pagesize")).Uint()
+	err := models.PageColumns(&users, &count, page, pageSize, "id, username, chinese_name, active, superuser")
+	if err != nil {
+		ResponseJson(c, http.StatusInternalServerError, err)
+		return
+	}
 
 	ResponseJsonMore(c, http.StatusOK, users, map[string]interface{}{"count": count})
 }
@@ -104,10 +129,14 @@ func UserLogin(c *gin.Context) {
 	}
 
 	if user.CheckPassword() {
-		user.GetAllAssociations()
+		err := user.LoadAllAssociations()
+		if err != nil {
+			ResponseJson(c, http.StatusInternalServerError, err)
+			return
+		}
 		ResponseJson(c, http.StatusOK, user)
 	} else {
-		ResponseJson(c, http.StatusBadRequest, "密码错误")
+		ResponseJson(c, http.StatusBadRequest, "账号或密码错误")
 	}
 }
 
@@ -121,12 +150,11 @@ func GroupGet(c *gin.Context) {
 
 	err := models.Detail(&group)
 	if err != nil {
-		logs.Error(err)
-		ResponseJson(c, http.StatusBadRequest, "ID错误")
+		ResponseJson(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	group.GetAllAssociationIds()
+	group.LoadAllAssociationIds()
 	ResponseJson(c, http.StatusOK, group)
 }
 
@@ -145,7 +173,16 @@ func GroupPut(c *gin.Context) {
 		return
 	}
 
-	group.CreateOrUpdate()
+	var err error
+	if models.Exist(group) {
+		err = group.Update()
+	} else {
+		err = group.Create()
+	}
+	if err != nil {
+		ResponseJson(c, http.StatusInternalServerError, err)
+		return
+	}
 	ResponseJson(c, http.StatusOK, group)
 }
 
@@ -192,11 +229,11 @@ func GroupDelete(c *gin.Context) {
 
 func GroupsGet(c *gin.Context) {
 	var group []*models.Group
-	var page uint
 	var count uint
 
-	page = utils.StrTo(c.Query("page")).Uint()
-	models.Page(&group, &count, page)
+	page := utils.StrTo(c.Query("page")).Uint()
+	pageSize := utils.StrTo(c.Query("pagesize")).Uint()
+	models.Page(&group, &count, page, pageSize)
 
 	ResponseJsonMore(c, http.StatusOK, group, map[string]interface{}{"count": count})
 }
@@ -216,7 +253,7 @@ func PermissionGet(c *gin.Context) {
 		return
 	}
 
-	permission.GetAllAssociationIds()
+	permission.LoadAllAssociationIds()
 	ResponseJson(c, http.StatusOK, permission)
 }
 
@@ -263,11 +300,11 @@ func PermissionDelete(c *gin.Context) {
 
 func PermissionsGet(c *gin.Context) {
 	var permissions []*models.Permission
-	var page uint
 	var count uint
 
-	page = utils.StrTo(c.Query("page")).Uint()
-	models.Page(&permissions, &count, page)
+	page := utils.StrTo(c.Query("page")).Uint()
+	pageSize := utils.StrTo(c.Query("pagesize")).Uint()
+	models.Page(&permissions, &count, page, pageSize)
 
 	ResponseJsonMore(c, http.StatusOK, permissions, map[string]interface{}{"count": count})
 }

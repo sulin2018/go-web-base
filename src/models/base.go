@@ -1,9 +1,7 @@
 package models
 
 import (
-	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -25,7 +23,7 @@ func DBInit() {
 			config.AppConfig.DBDatabase),
 	)
 	if err != nil {
-		logs.Panicln("models.Setup err: %v", err)
+		logs.Panicln("models.Setup err: ", err)
 	}
 
 	// Disable table name's pluralization
@@ -34,8 +32,8 @@ func DBInit() {
 	db.DB().SetMaxOpenConns(100)
 
 	// Disable association auto update/create
-	db.InstantSet("gorm:association_autoupdate", false)
-	//db.InstantSet("gorm:association_autocreate", false)
+	// db.InstantSet("gorm:association_autoupdate", false)
+	// db.InstantSet("gorm:association_autocreate", false)
 
 	if config.AppConfig.AppRunMode == "dev" {
 		db.LogMode(true)
@@ -57,10 +55,10 @@ func GetDB() *gorm.DB {
 	return db
 }
 
-func DBPage(page uint) func(db *gorm.DB) *gorm.DB {
+func DBPage(page uint, pageSize uint) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		offset := config.AppConfig.PageSize * (page - 1)
-		return db.Offset(offset).Limit(config.AppConfig.PageSize)
+		offset := pageSize * (page - 1)
+		return db.Offset(offset).Limit(pageSize)
 	}
 }
 
@@ -100,91 +98,61 @@ func DBOrder(orderCols []string) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
-func Detail(result interface{}) error {
-	dbResult := db.Find(result)
-	return dbResult.Error
+func Detail(tempModel interface{}) error {
+	result := db.Find(tempModel)
+	if result.Error != nil {
+		logs.Error(result.Error)
+	}
+	return result.Error
 }
 
 func Exist(tempModel interface{}) bool {
-	var count uint
-	//var id interface{}
-	//s := reflect.ValueOf(tempModel).Elem()
-	//typeOfT := s.Type()
-	//for i := 0; i < s.NumField(); i++ {
-	//	f := s.Field(i)
-	//	if typeOfT.Field(i).Name == "ID" {
-	//		id = f.Interface()
-	//		break
-	//	}
-	//	fmt.Printf("%d: %s %s = %v\n", i,
-	//		typeOfT.Field(i).Name, f.Type(), f.Interface())
-	//}
-	//db.Model(tempModel).Where("id=?", id).Count(&count)
-	db.Model(tempModel).Count(&count)
-	return count == 1
+	result := db.First(tempModel, tempModel)
+	return result.RowsAffected == 1
 }
 
-func List(results interface{}) {
-	db.Find(results)
-}
+// results 接收数据指针
+// count 总数指针
+// page 页码, 0表示获取所有/不分页
+// pageSize 页大小, 0表示使用配置大小
+func Page(results interface{}, count interface{}, page uint, pageSize uint) error {
+	tempQuery := db
+	tempQuery.Model(results).Count(count)
 
-func CreateOrUpdate(anyModel interface{}) error {
-	// model must have Update/Create method
-	if Exist(anyModel) {
-		if v := reflect.ValueOf(anyModel).MethodByName("Update"); v.String() == "<invalid Value>" {
-			return errors.New("model must have Update method")
-		} else {
-			v.Call(nil)
-			return nil
+	if page != 0 {
+		if pageSize == 0 {
+			pageSize = config.AppConfig.PageSize
 		}
-	} else {
-		if v := reflect.ValueOf(anyModel).MethodByName("Create"); v.String() == "<invalid Value>" {
-			return errors.New("model must have Create method")
-		} else {
-			v.Call(nil)
-			return nil
+		tempQuery = tempQuery.Scopes(DBPage(page, pageSize))
+	}
+	result := tempQuery.Find(results)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
+}
+
+// 分页获取 限定字段
+func PageColumns(results interface{}, count interface{}, page uint, pageSize uint, col string) error {
+	tempQuery := db
+	tempQuery.Model(results).Count(count)
+
+	if page != 0 {
+		if pageSize == 0 {
+			pageSize = config.AppConfig.PageSize
 		}
+		tempQuery = tempQuery.Scopes(DBPage(page, pageSize))
 	}
+	result := tempQuery.Select(col).Find(results)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func Page(results interface{}, count interface{}, page uint) {
-	tempQuery := db
-	tempQuery.Model(results).Count(count)
-
-	if page != 0 {
-		tempQuery = tempQuery.Scopes(DBPage(page))
-	}
-	tempQuery.Find(results)
-}
-
-func PageColumn(results interface{}, count interface{}, page uint, col string) {
-	tempQuery := db
-	tempQuery.Model(results).Count(count)
-
-	if page != 0 {
-		tempQuery = tempQuery.Scopes(DBPage(page))
-	}
-	tempQuery.Select(col).Find(results)
-}
-
-func ListPageSearchFilter(results interface{}, count interface{}, page uint, searchMap map[string]string, filterMap map[string]interface{}) {
-	tempQuery := db
-
-	if searchMap != nil {
-		tempQuery = tempQuery.Scopes(DBSearch(searchMap))
-	}
-	if filterMap != nil {
-		tempQuery = tempQuery.Scopes(DBFilter(filterMap))
-	}
-	tempQuery.Model(results).Count(count)
-
-	if page != 0 {
-		tempQuery = tempQuery.Scopes(DBPage(page))
-	}
-	tempQuery.Find(results)
-}
-
-func ListPageSearchFilterOrder(results interface{}, count interface{}, page uint, searchMap map[string]string, filterMap map[string]interface{}, orderCols []string) {
+func ListPageSearchFilterOrder(results interface{}, count interface{}, page uint, pageSize uint, searchMap map[string]string, filterMap map[string]interface{}, orderCols []string) error {
 	tempQuery := db
 
 	// filter search
@@ -198,14 +166,18 @@ func ListPageSearchFilterOrder(results interface{}, count interface{}, page uint
 
 	// order page
 	if page != 0 {
-		tempQuery = tempQuery.Scopes(DBPage(page))
+		if pageSize == 0 {
+			pageSize = config.AppConfig.PageSize
+		}
+		tempQuery = tempQuery.Scopes(DBPage(page, pageSize))
 	}
 	if orderCols != nil {
 		tempQuery = tempQuery.Scopes(DBOrder(orderCols))
 	}
-	tempQuery.Find(results)
-}
-
-func Search(results interface{}, searchMap map[string]string) {
-	db.Scopes(DBSearch(searchMap)).Find(results)
+	result := tempQuery.Find(results)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }

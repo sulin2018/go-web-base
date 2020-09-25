@@ -5,6 +5,7 @@ import (
 
 	logs "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm/clause"
 )
 
 type User struct {
@@ -48,30 +49,42 @@ type Group struct {
 	UserIds       []uint        `gorm:"-" json:"user_ids"`
 }
 
-func (s *User) EncryptPassword() {
+// func (s *User) AfterFind(tx *gorm.DB) (err error) {
+// 	if s.Password != "" {
+// 		s.Password = ""
+// 	}
+// 	return
+// }
+
+func (s *User) EncryptPassword() error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(s.Password), bcrypt.DefaultCost)
 	if err != nil {
 		logs.Error("encrypt password error:", err)
+		return err
 	}
 	s.Password = string(hash)
+	return nil
 }
 
-func (s *User) SetPassword(tempPw string) {
+func (s *User) SetPassword(tempPw string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(tempPw), bcrypt.DefaultCost)
 	if err != nil {
 		logs.Error("set password error:", err)
+		return err
 	}
 	db.Model(s).Update("Password", string(hash))
+	return nil
 }
 
 func (s *User) CheckPassword() bool {
 	if s.Username == "" {
 		return false
 	}
-	var userPassword []string
-	db.Table("user").Where("username = ?", s.Username).Pluck("password", &userPassword)
-	if len(userPassword) > 0 {
-		err := bcrypt.CompareHashAndPassword([]byte(userPassword[0]), []byte(s.Password))
+	var userPassword string
+	row := db.Table("users").Where("username = ?", s.Username).Select("password").Row()
+	err := row.Scan(&userPassword)
+	if err == nil {
+		err := bcrypt.CompareHashAndPassword([]byte(userPassword), []byte(s.Password))
 		if err != nil {
 			logs.Warn("password error:", s.Username)
 			return false
@@ -79,25 +92,42 @@ func (s *User) CheckPassword() bool {
 			logs.Info("password ok:", s.Username)
 			return true
 		}
+	} else {
+		logs.Warn("get user password error: ", s.Username)
 	}
 	return false
 }
 
-func (s *User) GetAllAssociationIds() {
+func (s *User) LoadAllAssociationIds() error {
 	var groupIds []uint
-	db.Table("user_group").Where("user_id = ?", s.ID).Pluck("group_id", &groupIds)
+	result := db.Table("user_group").Where("user_id = ?", s.ID).Pluck("group_id", &groupIds)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
 	s.GroupIds = groupIds
 
 	var permissionIds []uint
-	db.Table("user_permission").Where("user_id = ?", s.ID).Pluck("permission_id", &permissionIds)
+	result = db.Table("user_permission").Where("user_id = ?", s.ID).Pluck("permission_id", &permissionIds)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		logs.Error(result.Error)
+		return result.Error
+	}
 	s.PermissionIds = permissionIds
+	return nil
 }
 
-func (s *User) GetAllAssociations() {
-	db.Preload("Permissions").Preload("Groups").First(s)
+func (s *User) LoadAllAssociations() error {
+	result := db.Preload(clause.Associations).First(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *User) Create() {
+func (s *User) Create() error {
 	// add relations
 	var groups []*Group
 	var permissions []*Permission
@@ -114,20 +144,30 @@ func (s *User) Create() {
 	}
 	s.Permissions = permissions
 
-	db.Create(s)
+	result := db.Create(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *User) Delete() {
+func (s *User) Delete() error {
 	if s.ID == 0 {
-		return
+		return nil
 	}
 	// clear relations
 	db.Model(s).Association("Groups").Clear()
 	db.Model(s).Association("Permissions").Clear()
-	db.Delete(s)
+	result := db.Delete(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *User) Update() {
+func (s *User) Update() error {
 	// replace relations
 	var groups []*Group
 	var permissions []*Permission
@@ -137,7 +177,11 @@ func (s *User) Update() {
 			group := Group{ID: groupId}
 			groups = append(groups, &group)
 		}
-		db.Model(s).Association("Groups").Replace(groups)
+		result := db.Model(s).Association("Groups").Replace(groups)
+		if result.Error != nil {
+			logs.Error(result.Error)
+			return result.Error
+		}
 	}
 
 	if s.PermissionIds != nil {
@@ -145,52 +189,54 @@ func (s *User) Update() {
 			perm := Permission{ID: permId}
 			permissions = append(permissions, &perm)
 		}
-		db.Model(s).Association("Permissions").Replace(permissions)
+		result := db.Model(s).Association("Permissions").Replace(permissions)
+		if result.Error != nil {
+			logs.Error(result.Error)
+			return result.Error
+		}
 	}
 
-	db.Model(s).Updates(s)
-}
-
-func (s *Group) Page(results interface{}, page uint) {
-	if page == 0 {
-		db.Find(results)
-	} else {
-		db.Scopes(DBPage(page)).Find(results)
+	result := db.Model(s).Updates(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
 	}
+	return nil
 }
 
-func (s *Group) Detail() {
-	db.First(s)
-	s.GetAllAssociationIds()
-}
-
-func (s *Group) CreateOrUpdate() {
-	if Exist(s) {
-		s.Update()
-	} else {
-		s.Create()
-	}
-}
-
-func (s *Group) GetAllAssociationIds() {
+func (s *Group) LoadAllAssociationIds() error {
 	var userIds []uint
-	db.Table("user_group").Where("group_id = ?", s.ID).Pluck("user_id", &userIds)
+	result := db.Table("user_group").Where("group_id = ?", s.ID).Pluck("user_id", &userIds)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
 	s.UserIds = userIds
 
 	var permissionIds []uint
-	db.Table("group_permission").Where("group_id = ?", s.ID).Pluck("permission_id", &permissionIds)
+	result = db.Table("group_permission").Where("group_id = ?", s.ID).Pluck("permission_id", &permissionIds)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
 	s.PermissionIds = permissionIds
+	return nil
 }
 
-func (s *Group) GetAllAssociations() {
-	db.Preload("Permissions").Preload("Users").First(s)
+func (s *Group) LoadAllAssociations() error {
+	result := db.Preload(clause.Associations).First(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *Group) AppendPermission(obj interface{}) {
-	db.Model(s).Association("Permissions").Append(obj)
-}
+// func (s *Group) AppendPermission(obj interface{}) {
+// 	db.Model(s).Association("Permissions").Append(obj)
+// }
 
-func (s *Group) Create() {
+func (s *Group) Create() error {
 	// add relations
 	var users []*User
 	var permissions []*Permission
@@ -207,20 +253,30 @@ func (s *Group) Create() {
 	}
 	s.Permissions = permissions
 
-	db.Create(s)
+	result := db.Create(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *Group) Delete() {
+func (s *Group) Delete() error {
 	if s.ID == 0 {
-		return
+		return nil
 	}
 	// clear relations
 	db.Model(s).Association("Users").Clear()
 	db.Model(s).Association("Permissions").Clear()
-	db.Delete(s)
+	result := db.Delete(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *Group) Update() {
+func (s *Group) Update() error {
 	// replace relations
 	var users []*User
 	var permissions []*Permission
@@ -230,7 +286,11 @@ func (s *Group) Update() {
 			user := User{ID: uerId}
 			users = append(users, &user)
 		}
-		db.Model(s).Association("Users").Replace(users)
+		result := db.Model(s).Association("Users").Replace(users)
+		if result.Error != nil {
+			logs.Error(result.Error)
+			return result.Error
+		}
 	}
 
 	if s.PermissionIds != nil {
@@ -238,27 +298,50 @@ func (s *Group) Update() {
 			perm := Permission{ID: permId}
 			permissions = append(permissions, &perm)
 		}
-		db.Model(s).Association("Permissions").Replace(permissions)
+		result := db.Model(s).Association("Permissions").Replace(permissions)
+		if result.Error != nil {
+			logs.Error(result.Error)
+			return result.Error
+		}
 	}
 
-	db.Model(s).Updates(s)
+	result := db.Model(s).Updates(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *Permission) GetAllAssociationIds() {
+func (s *Permission) LoadAllAssociationIds() error {
 	var groupIds []uint
-	db.Table("group_permission").Where("permission_id = ?", s.ID).Pluck("group_id", &groupIds)
+	result := db.Table("group_permission").Where("permission_id = ?", s.ID).Pluck("group_id", &groupIds)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
 	s.GroupIds = groupIds
 
 	var userIds []uint
-	db.Table("user_permission").Where("permission_id = ?", s.ID).Pluck("user_id", &userIds)
+	result = db.Table("user_permission").Where("permission_id = ?", s.ID).Pluck("user_id", &userIds)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
 	s.UserIds = userIds
+	return nil
 }
 
-func (s *Permission) GetAllAssociations() {
-	db.Preload("Users").Preload("Groups").First(s)
+func (s *Permission) LoadAllAssociations() error {
+	result := db.Preload(clause.Associations).First(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *Permission) Create() {
+func (s *Permission) Create() error {
 	// add relations
 	var groups []*Group
 	var users []*User
@@ -275,20 +358,30 @@ func (s *Permission) Create() {
 	}
 	s.Users = users
 
-	db.Create(s)
+	result := db.Create(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *Permission) Delete() {
+func (s *Permission) Delete() error {
 	if s.ID == 0 {
-		return
+		return nil
 	}
 	// clear relations
 	db.Model(s).Association("Groups").Clear()
 	db.Model(s).Association("Users").Clear()
-	db.Delete(s)
+	result := db.Delete(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
 
-func (s *Permission) Update() {
+func (s *Permission) Update() error {
 	// replace relations
 	var groups []*Group
 	var users []*User
@@ -298,7 +391,11 @@ func (s *Permission) Update() {
 			group := Group{ID: groupId}
 			groups = append(groups, &group)
 		}
-		db.Model(s).Association("Groups").Replace(groups)
+		result := db.Model(s).Association("Groups").Replace(groups)
+		if result.Error != nil {
+			logs.Error(result.Error)
+			return result.Error
+		}
 	}
 
 	if s.UserIds != nil {
@@ -306,8 +403,17 @@ func (s *Permission) Update() {
 			user := User{ID: userId}
 			users = append(users, &user)
 		}
-		db.Model(s).Association("Users").Replace(users)
+		result := db.Model(s).Association("Users").Replace(users)
+		if result.Error != nil {
+			logs.Error(result.Error)
+			return result.Error
+		}
 	}
 
-	db.Model(s).Updates(s)
+	result := db.Model(s).Updates(s)
+	if result.Error != nil {
+		logs.Error(result.Error)
+		return result.Error
+	}
+	return nil
 }
