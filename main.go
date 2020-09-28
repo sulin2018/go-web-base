@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	logs "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/sulin2018/go-web-base/src/app/config"
 	"github.com/sulin2018/go-web-base/src/app/log"
 	"github.com/sulin2018/go-web-base/src/middleware"
@@ -42,11 +42,11 @@ func main() {
 		//MaxHeaderBytes: maxHeaderBytes,
 	}
 
-	logs.Info("Start http server, listening at ", endPoint)
+	logrus.Info("Start http server, listening at ", endPoint)
 
 	err := server.ListenAndServe()
 	if err != nil {
-		logs.Error(err)
+		logrus.Error(err)
 	}
 
 	// ginEngine.Run(endPoint)

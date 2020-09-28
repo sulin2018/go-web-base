@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/sessions"
+	"github.com/sirupsen/logrus"
 	"github.com/sulin2018/go-web-base/src/app/config"
 	"github.com/sulin2018/go-web-base/src/models"
 	"github.com/wader/gormstore"
@@ -22,12 +24,35 @@ func InitSessionStore() {
 	}
 }
 
-func GetSession(c *gin.Context, key string) (interface{}, error) {
-	session, err := store.Get(c.Request, "session")
-	if err != nil {
-		return nil, err
+func SessionMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		cSession, err := store.Get(c.Request, "session")
+		if err != nil {
+			logrus.Error(err)
+		}
+		c.Set("session", cSession)
+
+		// before request
+
+		c.Next()
+
+		// after request
 	}
-	value, ok := session.Values[key]
+}
+
+func GetSession(c *gin.Context, key string) (interface{}, error) {
+	// session, err := store.Get(c.Request, "session")
+	// if err != nil {
+	// 	return nil, err
+	// }
+	tempValue, exists := c.Get("session")
+	if !exists {
+		logrus.Error("获取sessions有误")
+		return nil, errors.New("session not exist")
+	}
+	cSession := tempValue.(*sessions.Session)
+
+	value, ok := cSession.Values[key]
 	if ok {
 		return value, nil
 	}
@@ -35,13 +60,22 @@ func GetSession(c *gin.Context, key string) (interface{}, error) {
 }
 
 func SetSession(c *gin.Context, key string, value interface{}) error {
-	session, err := store.Get(c.Request, "session")
-	if err != nil {
-		return err
+	// session, err := store.Get(c.Request, "session")
+	// if err != nil {
+	// 	return err
+	// }
+	tempValue, exists := c.Get("session")
+	if !exists {
+		logrus.Error("获取sessions有误")
+		return errors.New("session not exist")
 	}
-	session.Values[key] = value
-	err = session.Save(c.Request, c.Writer)
+	cSession := tempValue.(*sessions.Session)
+
+	cSession.Values[key] = value
+	err := cSession.Save(c.Request, c.Writer)
 	if err != nil {
+		logrus.Error("设置session有误")
+		logrus.Error(err)
 		return err
 	}
 	return nil

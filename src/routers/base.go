@@ -7,13 +7,15 @@ import (
 )
 
 var apiv1 *gin.RouterGroup
+var g *gin.Engine
 
 func InitGinEngine() *gin.Engine {
-	g := gin.New()
+	g = gin.New()
 	// g.Use(gin.Logger())
 	g.Use(gin.Recovery())
 
 	g.Use(middleware.AppLogger())
+	g.Use(middleware.SessionMiddleware())
 	g.Use(middleware.CorsMiddleware())
 
 	apiv1 = g.Group("/api/v1")

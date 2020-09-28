@@ -3,9 +3,8 @@ package models
 import (
 	"time"
 
-	logs "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm/clause"
 )
 
 type User struct {
@@ -14,7 +13,7 @@ type User struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 	DeletedAt   *time.Time `gorm:"index" json:"deleted_at"`
 	Username    string     `gorm:"type:varchar(50);not null;unique" description:"用户名" json:"username"`
-	Password    string     `gorm:"type:varchar(100)" json:"password,omitempty"`
+	Password    string     `gorm:"type:varchar(100)" json:"password,omitempty"` // omitempty作用: 该字段为空时, 对象转json将忽略该字段 -字符: 可彻底忽略
 	ChineseName string     `gorm:"type:varchar(25)" description:"中文名" json:"chinese_name"`
 	// UserDN      string     `gorm:"type:varchar(100)" description:"LDAP DN" json:"user_dn"`
 	Active    bool   `gorm:"default:1" json:"active"`
@@ -30,7 +29,7 @@ type User struct {
 type Permission struct {
 	ID          uint   `gorm:"primaryKey" uri:"id" json:"id"`
 	Name        string `gorm:"type:varchar(30);not null;unique" json:"name"`
-	Description string `gorm:"type:varchar(30)" json:"description"`
+	Description string `gorm:"type:text" json:"description"`
 
 	Users    []*User  `gorm:"many2many:user_permission" json:"users"`
 	UserIds  []uint   `gorm:"-" json:"user_ids"`
@@ -41,7 +40,7 @@ type Permission struct {
 type Group struct {
 	ID          uint   `gorm:"primaryKey" uri:"id" json:"id"`
 	Name        string `gorm:"type:varchar(30);not null" json:"name"`
-	Description string `gorm:"type:varchar(30)" json:"description"`
+	Description string `gorm:"type:text" json:"description"`
 
 	Permissions   []*Permission `gorm:"many2many:group_permission" json:"permissions"`
 	PermissionIds []uint        `gorm:"-" json:"permission_ids"`
@@ -59,7 +58,7 @@ type Group struct {
 func (s *User) EncryptPassword() error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(s.Password), bcrypt.DefaultCost)
 	if err != nil {
-		logs.Error("encrypt password error:", err)
+		logrus.Error("encrypt password error:", err)
 		return err
 	}
 	s.Password = string(hash)
@@ -69,7 +68,7 @@ func (s *User) EncryptPassword() error {
 func (s *User) SetPassword(tempPw string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(tempPw), bcrypt.DefaultCost)
 	if err != nil {
-		logs.Error("set password error:", err)
+		logrus.Error("set password error:", err)
 		return err
 	}
 	db.Model(s).Update("Password", string(hash))
@@ -81,28 +80,52 @@ func (s *User) CheckPassword() bool {
 		return false
 	}
 	var userPassword string
-	row := db.Table("users").Where("username = ?", s.Username).Select("password").Row()
+	row := db.Table("user").Where("username = ?", s.Username).Select("password").Row()
 	err := row.Scan(&userPassword)
 	if err == nil {
 		err := bcrypt.CompareHashAndPassword([]byte(userPassword), []byte(s.Password))
 		if err != nil {
-			logs.Warn("password error:", s.Username)
+			logrus.Warn("password error:", s.Username)
 			return false
 		} else {
-			logs.Info("password ok:", s.Username)
+			logrus.Info("password ok:", s.Username)
 			return true
 		}
 	} else {
-		logs.Warn("get user password error: ", s.Username)
+		logrus.Warn("get user password error: ", s.Username)
+		logrus.Error(err)
 	}
 	return false
+}
+
+func (s *User) LoadPermAssociationIds() error {
+	var permissionIds []uint
+	result := db.Table("user_permission").Where("user_id = ?", s.ID).Pluck("permission_id", &permissionIds)
+	if result.Error != nil {
+		logrus.Error(result.Error)
+		logrus.Error(result.Error)
+		return result.Error
+	}
+	s.PermissionIds = permissionIds
+	return nil
+}
+
+func (s *User) LoadGroupAssociationIds() error {
+	var groupIds []uint
+	result := db.Table("user_group").Where("user_id = ?", s.ID).Pluck("group_id", &groupIds)
+	if result.Error != nil {
+		logrus.Error(result.Error)
+		return result.Error
+	}
+	s.GroupIds = groupIds
+	return nil
 }
 
 func (s *User) LoadAllAssociationIds() error {
 	var groupIds []uint
 	result := db.Table("user_group").Where("user_id = ?", s.ID).Pluck("group_id", &groupIds)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	s.GroupIds = groupIds
@@ -110,8 +133,8 @@ func (s *User) LoadAllAssociationIds() error {
 	var permissionIds []uint
 	result = db.Table("user_permission").Where("user_id = ?", s.ID).Pluck("permission_id", &permissionIds)
 	if result.Error != nil {
-		logs.Error(result.Error)
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	s.PermissionIds = permissionIds
@@ -119,9 +142,9 @@ func (s *User) LoadAllAssociationIds() error {
 }
 
 func (s *User) LoadAllAssociations() error {
-	result := db.Preload(clause.Associations).First(s)
+	result := db.Preload("Groups").Preload("Permissions").First(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -146,7 +169,7 @@ func (s *User) Create() error {
 
 	result := db.Create(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -161,7 +184,7 @@ func (s *User) Delete() error {
 	db.Model(s).Association("Permissions").Clear()
 	result := db.Delete(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -179,7 +202,7 @@ func (s *User) Update() error {
 		}
 		result := db.Model(s).Association("Groups").Replace(groups)
 		if result.Error != nil {
-			logs.Error(result.Error)
+			logrus.Error(result.Error)
 			return result.Error
 		}
 	}
@@ -191,14 +214,14 @@ func (s *User) Update() error {
 		}
 		result := db.Model(s).Association("Permissions").Replace(permissions)
 		if result.Error != nil {
-			logs.Error(result.Error)
+			logrus.Error(result.Error)
 			return result.Error
 		}
 	}
 
 	result := db.Model(s).Updates(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -208,7 +231,7 @@ func (s *Group) LoadAllAssociationIds() error {
 	var userIds []uint
 	result := db.Table("user_group").Where("group_id = ?", s.ID).Pluck("user_id", &userIds)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	s.UserIds = userIds
@@ -216,7 +239,7 @@ func (s *Group) LoadAllAssociationIds() error {
 	var permissionIds []uint
 	result = db.Table("group_permission").Where("group_id = ?", s.ID).Pluck("permission_id", &permissionIds)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	s.PermissionIds = permissionIds
@@ -224,17 +247,13 @@ func (s *Group) LoadAllAssociationIds() error {
 }
 
 func (s *Group) LoadAllAssociations() error {
-	result := db.Preload(clause.Associations).First(s)
+	result := db.Preload("Users").Preload("Permissions").First(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
 }
-
-// func (s *Group) AppendPermission(obj interface{}) {
-// 	db.Model(s).Association("Permissions").Append(obj)
-// }
 
 func (s *Group) Create() error {
 	// add relations
@@ -255,7 +274,7 @@ func (s *Group) Create() error {
 
 	result := db.Create(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -270,7 +289,7 @@ func (s *Group) Delete() error {
 	db.Model(s).Association("Permissions").Clear()
 	result := db.Delete(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -288,7 +307,7 @@ func (s *Group) Update() error {
 		}
 		result := db.Model(s).Association("Users").Replace(users)
 		if result.Error != nil {
-			logs.Error(result.Error)
+			logrus.Error(result.Error)
 			return result.Error
 		}
 	}
@@ -300,16 +319,27 @@ func (s *Group) Update() error {
 		}
 		result := db.Model(s).Association("Permissions").Replace(permissions)
 		if result.Error != nil {
-			logs.Error(result.Error)
+			logrus.Error(result.Error)
 			return result.Error
 		}
 	}
 
 	result := db.Model(s).Updates(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
+	return nil
+}
+
+func (s *Permission) LoadGroupAssociationIds() error {
+	var groupIds []uint
+	result := db.Table("group_permission").Where("permission_id = ?", s.ID).Pluck("group_id", &groupIds)
+	if result.Error != nil {
+		logrus.Error(result.Error)
+		return result.Error
+	}
+	s.GroupIds = groupIds
 	return nil
 }
 
@@ -317,7 +347,7 @@ func (s *Permission) LoadAllAssociationIds() error {
 	var groupIds []uint
 	result := db.Table("group_permission").Where("permission_id = ?", s.ID).Pluck("group_id", &groupIds)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	s.GroupIds = groupIds
@@ -325,7 +355,7 @@ func (s *Permission) LoadAllAssociationIds() error {
 	var userIds []uint
 	result = db.Table("user_permission").Where("permission_id = ?", s.ID).Pluck("user_id", &userIds)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	s.UserIds = userIds
@@ -333,9 +363,9 @@ func (s *Permission) LoadAllAssociationIds() error {
 }
 
 func (s *Permission) LoadAllAssociations() error {
-	result := db.Preload(clause.Associations).First(s)
+	result := db.Preload("Users").Preload("Permissions").First(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -360,7 +390,7 @@ func (s *Permission) Create() error {
 
 	result := db.Create(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -375,7 +405,7 @@ func (s *Permission) Delete() error {
 	db.Model(s).Association("Users").Clear()
 	result := db.Delete(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -393,7 +423,7 @@ func (s *Permission) Update() error {
 		}
 		result := db.Model(s).Association("Groups").Replace(groups)
 		if result.Error != nil {
-			logs.Error(result.Error)
+			logrus.Error(result.Error)
 			return result.Error
 		}
 	}
@@ -405,14 +435,14 @@ func (s *Permission) Update() error {
 		}
 		result := db.Model(s).Association("Users").Replace(users)
 		if result.Error != nil {
-			logs.Error(result.Error)
+			logrus.Error(result.Error)
 			return result.Error
 		}
 	}
 
 	result := db.Model(s).Updates(s)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil

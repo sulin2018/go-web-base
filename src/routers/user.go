@@ -2,28 +2,32 @@ package routers
 
 import (
 	"github.com/sulin2018/go-web-base/src/controllers"
+	"github.com/sulin2018/go-web-base/src/middleware"
 )
 
 func AddUserV1Router() {
+	userApi := g.Group("/api/v1")
+	userApi.Use(middleware.PermissionMiddleware("manage_user"))
+
 	// user
-	apiv1.GET("/user/:id", controllers.UserGet)
-	apiv1.POST("/user", controllers.UserPost)
-	apiv1.PATCH("/user/:id", controllers.UserPatch)
-	apiv1.DELETE("/user/:id", controllers.UserDelete)
-	apiv1.GET("/users", controllers.UsersGet)
+	userApi.GET("/user/:id", controllers.UserGet)
+	userApi.POST("/user", controllers.UserPost)
+	userApi.PATCH("/user/:id", controllers.UserPatch)
+	userApi.DELETE("/user/:id", controllers.UserDelete)
+	userApi.GET("/users", controllers.UsersGet)
 
 	// group
-	apiv1.GET("/group/:id", controllers.GroupGet)
-	apiv1.PATCH("/group/:id", controllers.GroupPatch)
-	apiv1.DELETE("/group/:id", controllers.GroupDelete)
-	apiv1.PUT("/group/:id", controllers.GroupPut)
-	apiv1.POST("/group", controllers.GroupPost)
-	apiv1.GET("/groups", controllers.GroupsGet)
+	userApi.GET("/group/:id", controllers.GroupGet)
+	userApi.PATCH("/group/:id", controllers.GroupPatch)
+	userApi.DELETE("/group/:id", controllers.GroupDelete)
+	userApi.PUT("/group/:id", controllers.GroupPut)
+	userApi.POST("/group", controllers.GroupPost)
+	userApi.GET("/groups", controllers.GroupsGet)
 
 	// permission
-	apiv1.GET("/permission/:id", controllers.PermissionGet)
-	apiv1.PATCH("/permission/:id", controllers.PermissionPatch)
-	apiv1.DELETE("/permission/:id", controllers.PermissionDelete)
-	apiv1.POST("/permission", controllers.PermissionPost)
-	apiv1.GET("/permissions", controllers.PermissionsGet)
+	userApi.GET("/permission/:id", controllers.PermissionGet)
+	userApi.PATCH("/permission/:id", controllers.PermissionPatch)
+	userApi.DELETE("/permission/:id", controllers.PermissionDelete)
+	userApi.POST("/permission", controllers.PermissionPost)
+	userApi.GET("/permissions", controllers.PermissionsGet)
 }

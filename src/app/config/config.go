@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 
 	"github.com/JeremyLoy/config"
-	logs "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/sulin2018/go-web-base/src/utils"
 	"gopkg.in/yaml.v2"
 )
@@ -35,31 +35,31 @@ type AppConf struct {
 var AppConfig AppConf
 
 func InitConfig(configFile string) {
-	logs.Trace("config file is", configFile)
+	logrus.Trace("config file is", configFile)
 
 	if utils.IsNotExist(configFile) {
-		logs.Fatalln("config file not exist!")
+		logrus.Fatalln("config file not exist!")
 	}
 
 	// load config from yaml
 	yamlFile, err := ioutil.ReadFile(configFile)
 	if err != nil {
-		logs.Fatalln(err.Error())
+		logrus.Fatalln(err.Error())
 	}
 	err = yaml.Unmarshal(yamlFile, &AppConfig)
 	if err != nil {
-		logs.Fatalln(err.Error())
+		logrus.Fatalln(err.Error())
 	}
 
 	// load config from env
 	err = config.FromEnv().To(&AppConfig)
 	if err != nil {
-		logs.Fatalln(err)
+		logrus.Fatalln(err)
 	}
 
 	AppConfig.AppReadTimeout = AppConfig.AppReadTimeout * time.Second
 	AppConfig.AppWriteTimeout = AppConfig.AppWriteTimeout * time.Second
 
-	logs.Trace(AppConfig.AppName)
-	logs.Trace("init config complate")
+	logrus.Trace(AppConfig.AppName)
+	logrus.Trace("init config complate")
 }

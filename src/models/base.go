@@ -6,14 +6,14 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jinzhu/gorm"
-	logs "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/sulin2018/go-web-base/src/app/config"
 )
 
 var db *gorm.DB
 
 func DBInit() {
-	logs.Trace("db init")
+	logrus.Trace("db init")
 	var err error
 	db, err = gorm.Open(config.AppConfig.DBType,
 		fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8&parseTime=True&loc=Local",
@@ -23,7 +23,7 @@ func DBInit() {
 			config.AppConfig.DBDatabase),
 	)
 	if err != nil {
-		logs.Panicln("models.Setup err: ", err)
+		logrus.Panicln("models.Setup err: ", err)
 	}
 
 	// Disable table name's pluralization
@@ -40,7 +40,8 @@ func DBInit() {
 	}
 
 	DBAutoMigrate()
-	logs.Trace("db init complate")
+	InitAuth()
+	logrus.Trace("db init complate")
 }
 
 func DBAutoMigrate() {
@@ -49,6 +50,30 @@ func DBAutoMigrate() {
 		&Permission{},
 		&Group{},
 	)
+}
+
+func InitAuth() {
+	// 创建默认管理员
+	admin := User{Username: "admin"}
+	if !Exist(&admin) {
+		admin.Password = config.AppConfig.UserBasePassword
+		_ = admin.EncryptPassword()
+		admin.Superuser = true
+
+		err := admin.Create()
+		if err != nil {
+			logrus.Error("权限系统初始化失败")
+			logrus.Error(err)
+		}
+
+		group := Group{Name: "administrator", Description: "website administrator group"}
+		perm := Permission{Name: "manage_user", Description: "manage user/group/permission permission, create/delete/edit/query", Groups: []*Group{&group}}
+		err = perm.Create()
+		if err != nil {
+			logrus.Error("权限系统初始化失败")
+			logrus.Error(err)
+		}
+	}
 }
 
 func GetDB() *gorm.DB {
@@ -71,7 +96,7 @@ func DBSearch(searchMap map[string]string) func(db *gorm.DB) *gorm.DB {
 			args = append(args, "%"+v+"%")
 		}
 		qs := strings.Join(searchQS, " OR ")
-		//logs.Println(qs)
+		//logrus.Println(qs)
 		return db.Where(qs, args...)
 	}
 }
@@ -85,7 +110,7 @@ func DBFilter(filterMap map[string]interface{}) func(db *gorm.DB) *gorm.DB {
 			args = append(args, v)
 		}
 		qs := strings.Join(filters, " AND ")
-		//logs.Println(qs)
+		//logrus.Println(qs)
 		return db.Where(qs, args...)
 	}
 }
@@ -93,22 +118,38 @@ func DBFilter(filterMap map[string]interface{}) func(db *gorm.DB) *gorm.DB {
 func DBOrder(orderCols []string) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		qs := strings.Join(orderCols, ",")
-		//logs.Println(qs)
+		//logrus.Println(qs)
 		return db.Order(qs)
 	}
+}
+
+func LoadColumns(tempModel interface{}, columns []string) error {
+	result := db.Select(columns).Find(tempModel)
+	if result.Error != nil {
+		logrus.Error(result.Error)
+	}
+	return result.Error
 }
 
 func Detail(tempModel interface{}) error {
 	result := db.Find(tempModel)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 	}
 	return result.Error
 }
 
 func Exist(tempModel interface{}) bool {
-	result := db.First(tempModel, tempModel)
+	result := db.Select("id").Find(tempModel, tempModel)
 	return result.RowsAffected == 1
+}
+
+func UpdateByMapOrStruct(tempModel interface{}, nowDatas interface{}) error {
+	result := db.Model(tempModel).Updates(nowDatas)
+	if result.Error != nil {
+		logrus.Error(result.Error)
+	}
+	return result.Error
 }
 
 // results 接收数据指针
@@ -127,7 +168,7 @@ func Page(results interface{}, count interface{}, page uint, pageSize uint) erro
 	}
 	result := tempQuery.Find(results)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -146,7 +187,7 @@ func PageColumns(results interface{}, count interface{}, page uint, pageSize uin
 	}
 	result := tempQuery.Select(col).Find(results)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
@@ -176,7 +217,7 @@ func ListPageSearchFilterOrder(results interface{}, count interface{}, page uint
 	}
 	result := tempQuery.Find(results)
 	if result.Error != nil {
-		logs.Error(result.Error)
+		logrus.Error(result.Error)
 		return result.Error
 	}
 	return nil
